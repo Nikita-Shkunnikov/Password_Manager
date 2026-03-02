@@ -1,0 +1,39 @@
+# --- Секреты и данные ---
+.env
+*.db
+*.sqlite3
+*.key
+*.pem
+*.log
+data/
+exports/
+secrets/
+
+# --- PyCharm (JetBrains) ---
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# --- Python / Окружение ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+build/
+dist/
+*.spec
+
+# --- Данные и тесты ---
+*.csv
+*.xlsx
+.pytest_cache/
+
+# --- Системные файлы ---
+.vscode/
+.DS_Store
+*.exe
+drivers/

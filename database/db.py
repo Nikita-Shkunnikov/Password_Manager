@@ -66,9 +66,9 @@ class DBManager:
         self._execute('''
             CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
+                title BLOB NOT NULL,
                 password BLOB NOT NULL,
-                notes TEXT
+                notes BLOB
             );
         ''', commit=True)
 
@@ -90,7 +90,7 @@ class DBManager:
             return row["salt_mp"], row["salt_dk"], row["master_hash"]
         return None, None, None
 
-    def add_entry(self, title: str, password_encrypted: bytes, notes: Optional[str] = None) -> int:
+    def add_entry(self, title: bytes, password_encrypted: bytes, notes: Optional[bytes] = None) -> int:
         last_id = self._execute(
             "INSERT INTO entries (title, password, notes) VALUES (?, ?, ?);",
             (title, password_encrypted, notes),
@@ -113,7 +113,7 @@ class DBManager:
     def delete_entry(self, entry_id: int):
         self._execute("DELETE FROM entries WHERE id = ?;", (entry_id,), commit=True)
 
-    def overwriting_data(self, new_salt_mp: bytes, new_salt_dk: bytes, new_master_hash: bytes, dct: dict):
+    def overwriting_data(self, new_salt_mp: bytes, new_salt_dk: bytes, new_master_hash: bytes, new_entries: list):
         conn = self.conn
         cursor = conn.cursor()
 
@@ -125,19 +125,22 @@ class DBManager:
                 cursor.execute("""
                     CREATE TABLE entries_new (
                         id INTEGER PRIMARY KEY,
-                        title TEXT NOT NULL,
+                        title BLOB NOT NULL,
                         password BLOB NOT NULL,
-                        notes TEXT
+                        notes BLOB
                     )
                 """)
 
-                for entry_id, enc in dct.items():
+                for entry in new_entries:
                     cursor.execute("""
                         INSERT INTO entries_new (id, title, password, notes)
-                        SELECT id, title, ?, notes
-                        FROM entries
-                        WHERE id = ?
-                    """, (enc, entry_id))
+                        VALUES (?, ?, ?, ?)
+                    """, (
+                        entry.id,
+                        entry.title,
+                        entry.password_encrypted,
+                        entry.notes_encrypted
+                    ))
 
                 cursor.execute("SELECT COUNT(*) FROM entries")
                 old_count = cursor.fetchone()[0]
@@ -155,8 +158,10 @@ class DBManager:
                 cursor.execute("""
                     UPDATE master_password
                     SET salt_mp = ?, salt_dk = ?, master_hash = ?
-                    WHERE id = 1
                 """, (new_salt_mp, new_salt_dk, new_master_hash))
+                if cursor.rowcount == 0:
+                    raise RuntimeError("Запись мастер-пароля не найдена в базе!")
+
             return True
 
         except Exception as e:

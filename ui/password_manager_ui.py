@@ -116,7 +116,7 @@ class PasswordManagerUI:
     def refresh_list(self):
         self.lst.controls.clear()
 
-        for en in self.pm.list_passwords():
+        for en in self.pm.list_passwords(decrypt_title=True):
             self.lst.controls.append(
                 ft.Row(
                     [
@@ -197,7 +197,14 @@ class PasswordManagerUI:
         self.refresh_list()
 
     def show_password(self, entry_id):
-        pwd, note = self.pm.get_password_plain(entry_id)
+
+        data = self.pm.get_password_and_notes_plain(entry_id)
+
+        if not data:
+            self.set_status("Ошибка! Запись не найдена в БД.")
+            return
+
+        pwd, note = data
 
         dlg = ft.AlertDialog(
             modal=True,

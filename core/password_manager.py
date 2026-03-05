@@ -3,6 +3,7 @@
 
 
 import hmac
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -13,9 +14,9 @@ from security.crypto_manager import CryptoManager
 @dataclass
 class PasswordEntry:
     id: Optional[int]
-    title: str
+    title: bytes
     password_encrypted: bytes
-    notes: Optional[str] = None
+    notes_encrypted: Optional[bytes] = None
 
 
 class PasswordManager:
@@ -47,6 +48,9 @@ class PasswordManager:
             salt_mp, salt_dk, stored_hash = db.get_master_password()
             if salt_mp is None:
                 raise RuntimeError("Мастер-пароль не установлен.")
+
+            time.sleep(0.5)
+
             calc = self.crypto.hash_master_password(master_password, salt_mp)
             if hmac.compare_digest(calc, stored_hash):
                 self.salt_mp = salt_mp
@@ -59,14 +63,19 @@ class PasswordManager:
         if not self.derived_key:
             raise RuntimeError("Мастер-пароль не подтвержден.")
 
-        token = self.crypto.encrypt(password_plain, self.derived_key)
+        password_token = self.crypto.encrypt(password_plain, self.derived_key)
+        title_token = self.crypto.encrypt(title, self.derived_key)
+        notes_token = self.crypto.encrypt(notes, self.derived_key) if notes else None
 
         with self._get_db() as db:
-            entry_id = db.add_entry(title, token, notes)
+            entry_id = db.add_entry(title_token, password_token, notes_token)
 
         return entry_id
 
-    def list_passwords(self):
+    def list_passwords(self, decrypt_title=False):
+        if not self.derived_key:
+            raise RuntimeError("Мастер-пароль не подтвержден.")
+
         with self._get_db() as db:
             raw_entries = db.get_entries()
 
@@ -74,13 +83,13 @@ class PasswordManager:
         for r in raw_entries:
             result.append(PasswordEntry(
                 id=r["id"],
-                title=r["title"],
+                title=self.crypto.decrypt(r["title"], self.derived_key) if decrypt_title else r["title"],
                 password_encrypted=r["password"],
-                notes=r["notes"]
+                notes_encrypted=r["notes"]
             ))
         return result
 
-    def get_password_plain(self, entry_id: int):
+    def get_password_and_notes_plain(self, entry_id: int):
         if not self.derived_key:
             raise RuntimeError("Мастер-пароль не подтвержден.")
 
@@ -91,11 +100,14 @@ class PasswordManager:
             return None
 
         entry = PasswordEntry(id=r["id"], title=r["title"],
-                              password_encrypted=r["password"], notes=r["notes"])
+                              password_encrypted=r["password"], notes_encrypted=r["notes"])
 
-        return self.crypto.decrypt(entry.password_encrypted, self.derived_key), entry.notes
+        return self.crypto.decrypt(entry.password_encrypted, self.derived_key), self.crypto.decrypt(
+            entry.notes_encrypted, self.derived_key) if entry.notes_encrypted else None
 
     def delete_password(self, entry_id: int):
+        if not self.derived_key:
+            raise RuntimeError("Мастер-пароль не подтвержден.")
         with self._get_db() as db:
             db.delete_entry(entry_id)
 
@@ -108,14 +120,24 @@ class PasswordManager:
             master_hash_new = self.crypto.hash_master_password(master_password, salt_mp_new)
             derived_key_new = self.crypto.derive_key(master_password, salt_dk_new)
 
-            dct = {}
             entries = self.list_passwords()
+            new_entries = []
+
             for en in entries:
-                dct[en.id] = self.crypto.encrypt(self.crypto.decrypt(en.password_encrypted, self.derived_key),
-                                                 derived_key_new)
+                decrypt_title = self.crypto.decrypt(en.title, self.derived_key)
+                decrypt_pass = self.crypto.decrypt(en.password_encrypted, self.derived_key)
+                decrypt_notes = self.crypto.decrypt(en.notes_encrypted,
+                                                    self.derived_key) if en.notes_encrypted else None
+
+                new_entries.append(PasswordEntry(
+                    id=en.id,
+                    title=self.crypto.encrypt(decrypt_title, derived_key_new),
+                    password_encrypted=self.crypto.encrypt(decrypt_pass, derived_key_new),
+                    notes_encrypted=self.crypto.encrypt(decrypt_notes, derived_key_new) if decrypt_notes else None
+                ))
 
             with self._get_db() as db:
-                result = db.overwriting_data(salt_mp_new, salt_dk_new, master_hash_new, dct)
+                result = db.overwriting_data(salt_mp_new, salt_dk_new, master_hash_new, new_entries)
 
             self.salt_mp = salt_mp_new
             self.salt_dk = salt_dk_new
